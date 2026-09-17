@@ -150,6 +150,9 @@ DOM_SERIALIZER_SCRIPT = r"""
     if (tag === "iframe" || tag === "frame") {
       return "frame";
     }
+    if (tag === "table") {
+      return "table";
+    }
     if (/^h[1-6]$/.test(tag)) {
       return "heading";
     }
@@ -257,6 +260,49 @@ DOM_SERIALIZER_SCRIPT = r"""
     return text.length > 0 && text !== accessibleName(el);
   };
 
+  const isDataTable = (table) => {
+    const role = explicitRole(table);
+    if (["none", "presentation"].includes(role)) {
+      return false;
+    }
+    const rows = Array.from(table.rows)
+      .filter(isVisible)
+      .map((row) => Array.from(row.cells).filter(isVisible));
+    const cells = rows.flat();
+    if (!cells.some((cell) => clean(cell.innerText))) {
+      return false;
+    }
+    if (["table", "grid", "treegrid"].includes(role)) {
+      return true;
+    }
+    // HTML's data-table signals must belong to this table, not a nested one.
+    // https://html.spec.whatwg.org/multipage/tables.html#the-table-element
+    const headers = table.querySelectorAll("caption, thead, th, [scope], [headers]");
+    if (Array.from(headers).some((el) =>
+      el.closest("table") === table && isVisible(el) && clean(el.innerText)
+    )) {
+      return true;
+    }
+    if (table.querySelector("table") || rows.length < 3 || rows[0].length < 2 ||
+        !rows.every((row) => row.length === rows[0].length)) {
+      return false;
+    }
+    // ponytail: unmarked tables need a regular grid of short values; require
+    // explicit semantics for prose-heavy or irregular data tables.
+    const compactCells = cells.filter((cell) => {
+      const text = clean(cell.innerText);
+      return text.length > 0 && text.length <= 160 && !cell.querySelector(
+        "form, input, select, textarea, button, img, video, iframe, article, section, nav, h1, h2, h3, h4, h5, h6"
+      );
+    });
+    const linkCells = cells.filter((cell) => {
+      const links = Array.from(cell.querySelectorAll("a"));
+      return links.length > 0 && clean(cell.innerText) ===
+        clean(links.map((link) => link.innerText).join(" "));
+    });
+    return compactCells.length >= cells.length * 0.8 && linkCells.length < cells.length * 0.8;
+  };
+
   const shouldInclude = (el) => {
     const tag = tagName(el);
     if (SKIP_TAGS.has(tag)) {
@@ -264,6 +310,9 @@ DOM_SERIALIZER_SCRIPT = r"""
     }
     if (!isVisible(el)) {
       return false;
+    }
+    if (tag === "table") {
+      return config.includeContent && isDataTable(el);
     }
 
     const interactive = isInteractive(el);
