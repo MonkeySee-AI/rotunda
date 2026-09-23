@@ -408,6 +408,7 @@ DOM_SERIALIZER_SCRIPT = r"""
   };
 
   const items = [];
+  const elements = [];
   const seen = new Set();
 
   const pushElement = (el) => {
@@ -423,6 +424,7 @@ DOM_SERIALIZER_SCRIPT = r"""
     const text = elementText(el);
     const attrs = attrsFor(el);
 
+    elements.push(el);
     items.push({
       local_id: items.length,
       tag: tagName(el),
@@ -454,7 +456,7 @@ DOM_SERIALIZER_SCRIPT = r"""
   };
 
   visit(document.documentElement);
-  return items;
+  return options.captureElements ? {items, elements} : items;
 }
 """
 
@@ -598,7 +600,7 @@ class DOMSerializer:
             parent_index = frame_index.get(id(parent))
 
             try:
-                raw_items = frame.evaluate(DOM_SERIALIZER_SCRIPT, self._script_options())
+                raw_items, handles = _capture_snapshot(frame, self._script_options())
                 dom_frames.append(DOMFrame(index=index, url=url, name=name, parent_index=parent_index))
             except Exception as exc:
                 dom_frames.append(
@@ -627,7 +629,7 @@ class DOMSerializer:
                 self._references[element.ref] = DOMReference(
                     element=element,
                     selectors=selectors,
-                    handle=_capture_element_handle(frame, selectors),
+                    handle=handles[raw["local_id"]],
                 )
 
         text = self.render(items, dom_frames)
@@ -648,7 +650,7 @@ class DOMSerializer:
             parent_index = frame_index.get(id(parent))
 
             try:
-                raw_items = await frame.evaluate(DOM_SERIALIZER_SCRIPT, self._script_options())
+                raw_items, handles = await _async_capture_snapshot(frame, self._script_options())
                 dom_frames.append(DOMFrame(index=index, url=url, name=name, parent_index=parent_index))
             except Exception as exc:
                 dom_frames.append(
@@ -677,7 +679,7 @@ class DOMSerializer:
                 self._references[element.ref] = DOMReference(
                     element=element,
                     selectors=selectors,
-                    handle=await _async_capture_element_handle(frame, selectors),
+                    handle=handles[raw["local_id"]],
                 )
 
         text = self.render(items, dom_frames)
@@ -898,26 +900,45 @@ def _selectors_for_element(element: DOMElement) -> tuple[str, ...]:
     )
 
 
-def _capture_element_handle(frame: Any, selectors: tuple[str, ...]) -> Any | None:
-    for selector in selectors:
+def _capture_snapshot(
+    frame: Any, options: dict[str, Any]
+) -> tuple[list[dict], dict[int, Any]]:
+    # Capture nodes in the same DOM walk as their descriptions; no selector race.
+    snapshot = frame.evaluate_handle(
+        DOM_SERIALIZER_SCRIPT, {**options, "captureElements": True}
+    )
+    try:
+        items = snapshot.evaluate("snapshot => snapshot.items")
+        elements = snapshot.get_property("elements")
         try:
-            locator = frame.locator(selector)
-            if locator.count() > 0:
-                return _first_visible_locator(locator).element_handle(timeout=0)
-        except Exception:
-            continue
-    return None
+            handles = elements.get_properties()
+            return items, {
+                int(key): handle.as_element() for key, handle in handles.items()
+            }
+        finally:
+            elements.dispose()
+    finally:
+        snapshot.dispose()
 
 
-async def _async_capture_element_handle(frame: Any, selectors: tuple[str, ...]) -> Any | None:
-    for selector in selectors:
+async def _async_capture_snapshot(
+    frame: Any, options: dict[str, Any]
+) -> tuple[list[dict], dict[int, Any]]:
+    snapshot = await frame.evaluate_handle(
+        DOM_SERIALIZER_SCRIPT, {**options, "captureElements": True}
+    )
+    try:
+        items = await snapshot.evaluate("snapshot => snapshot.items")
+        elements = await snapshot.get_property("elements")
         try:
-            locator = frame.locator(selector)
-            if await locator.count() > 0:
-                return await (await _async_first_visible_locator(locator)).element_handle(timeout=0)
-        except Exception:
-            continue
-    return None
+            handles = await elements.get_properties()
+            return items, {
+                int(key): handle.as_element() for key, handle in handles.items()
+            }
+        finally:
+            await elements.dispose()
+    finally:
+        await snapshot.dispose()
 
 
 def _first_visible_locator(locator: Any) -> Any:
