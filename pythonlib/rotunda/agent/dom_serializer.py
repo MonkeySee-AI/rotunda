@@ -14,6 +14,7 @@ DOM_SERIALIZER_SCRIPT = r"""
     includeInteractive: options.includeInteractive !== false,
     maxTextLength: options.maxTextLength || 140,
     maxItems: options.maxItems || 250,
+    viewportOnly: options.viewportOnly === true,
   };
 
   const SKIP_TAGS = new Set([
@@ -122,7 +123,9 @@ DOM_SERIALIZER_SCRIPT = r"""
       return false;
     }
     const rects = Array.from(el.getClientRects());
-    return rects.some((rect) => rect.width > 0 && rect.height > 0);
+    return rects.some((rect) => rect.width > 0 && rect.height > 0 &&
+      (!config.viewportOnly || (rect.bottom > 0 && rect.right > 0 &&
+        rect.top < window.innerHeight && rect.left < window.innerWidth)));
   };
 
   const tagName = (el) => el.tagName.toLowerCase();
@@ -571,6 +574,7 @@ class DOMSerializer:
         hash_length: int = 8,
         include_content: bool = True,
         include_interactive: bool = True,
+        viewport_only: bool = False,
     ) -> None:
         if hash_length < 4:
             raise ValueError("hash_length must be at least 4")
@@ -579,6 +583,7 @@ class DOMSerializer:
         self.hash_length = hash_length
         self.include_content = include_content
         self.include_interactive = include_interactive
+        self.viewport_only = viewport_only
         self._identity_cache: dict[str, uuid.UUID] = {}
         self._ref_to_uuid: dict[str, uuid.UUID] = {}
         self._references: dict[str, DOMReference] = {}
@@ -764,6 +769,7 @@ class DOMSerializer:
             "includeInteractive": self.include_interactive,
             "maxItems": self.max_items,
             "maxTextLength": self.max_text_length,
+            "viewportOnly": self.viewport_only,
         }
 
     def _element_from_raw(

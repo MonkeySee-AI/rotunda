@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import pytest
 from rotunda.agent import DOMSerializer
 from rotunda.agent.dom_serializer import DOM_SERIALIZER_SCRIPT
@@ -200,3 +202,24 @@ def test_unknown_reference_raises_key_error() -> None:
 
     with pytest.raises(KeyError, match="Unknown DOM reference"):
         serializer.get_reference("missing")
+
+
+@pytest.mark.integration
+def test_viewport_filter_applies_before_item_limit(request) -> None:
+    if not request.config.getoption("--integration"):
+        pytest.skip("Pass --integration for the real-browser viewport check.")
+    from rotunda.sync_api import Rotunda
+
+    # Offscreen calendar months must not consume the visible action budget.
+    hidden = "".join(f"<button>Offscreen {i}</button>" for i in range(30))
+    with Rotunda(
+        headless=True, executable_path=os.environ.get("ROTUNDA_EXECUTABLE_PATH")
+    ) as browser:
+        page = browser.new_page(viewport={"width": 800, "height": 600})
+        page.set_content(
+            f'<div style="position:absolute;left:2000px">{hidden}</div>'
+            '<button id="done">Done</button>'
+        )
+        snapshot = DOMSerializer(max_items=10, viewport_only=True).serialize(page)
+        assert any(item.attributes.get("id") == "done" for item in snapshot.items)
+        assert not any(item.name.startswith("Offscreen") for item in snapshot.items)
