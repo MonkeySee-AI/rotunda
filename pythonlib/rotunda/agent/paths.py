@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-AGENT_HOME = Path.home() / ".rotunda" / "agent"
+# ROTUNDA_AGENT_HOME gives one agent its own state folder (profiles, sessions, auth, daemon file),
+# so two agents can each run a daemon on one machine. The browser build stays shared.
+AGENT_HOME = Path(os.environ.get("ROTUNDA_AGENT_HOME") or Path.home() / ".rotunda" / "agent")
 PROFILES_DIR = AGENT_HOME / "profiles"
 SESSIONS_DIR = AGENT_HOME / "sessions"
 LOGS_DIR = AGENT_HOME / "logs"
